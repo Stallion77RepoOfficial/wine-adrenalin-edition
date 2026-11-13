@@ -12491,7 +12491,16 @@ case $host_os in
     SYSTEMCONFIGURATION_LIBS="-framework SystemConfiguration"
 
 
-    WINELOADER_LDFLAGS="-Wl,-segalign,0x1000,-pagezero_size,0x1000,-sectcreate,__TEXT,__info_plist,loader/wine_info.plist"
+    # An arm64 Mach-O binary must keep the default 4 GB __PAGEZERO: the
+    # kernel kills one with a smaller one at exec. With the
+    # cross-architecture-support entitlement it leaves that __PAGEZERO as
+    # an inaccessible mapping ntdll can replace, which gives the low memory.
+    # A loader built for macOS 11 keeps x18 (the TEB in ARM64 Windows code)
+    # across context switches; newer ones get it cleared.
+    case $HOST_ARCH in
+      aarch64) WINELOADER_LDFLAGS="-Wl,-x86_64_layout_emulation,-platform_version,macos,11.0,11.0,-sectcreate,__TEXT,__info_plist,loader/wine_info.plist" ;;
+      *) WINELOADER_LDFLAGS="-Wl,-segalign,0x1000,-pagezero_size,0x1000,-sectcreate,__TEXT,__info_plist,loader/wine_info.plist" ;;
+    esac
 
     case $HOST_ARCH in
       i386) wine_use_preloader=yes ;;
@@ -15495,34 +15504,40 @@ fi
 then :
   ac_cv_lib_soname_Xcomposite=/opt/X11/lib/libXcomposite.1.dylib
 fi
-    if test -f /usr/local/lib/libdbus-1.3.dylib
+    case $HOST_ARCH in #(
+  aarch64) :
+    _wine_brew=/opt/homebrew ;; #(
+  *) :
+    _wine_brew=/usr/local ;;
+esac
+  if test -f $_wine_brew/lib/libdbus-1.3.dylib
 then :
-  ac_cv_lib_soname_dbus_1=/usr/local/lib/libdbus-1.3.dylib
+  ac_cv_lib_soname_dbus_1=$_wine_brew/lib/libdbus-1.3.dylib
 fi
-  if test -f /usr/local/lib/libgnutls.30.dylib
+  if test -f $_wine_brew/lib/libgnutls.30.dylib
 then :
-  ac_cv_lib_soname_gnutls=/usr/local/lib/libgnutls.30.dylib
+  ac_cv_lib_soname_gnutls=$_wine_brew/lib/libgnutls.30.dylib
 fi
-  if test -f /usr/local/lib/libfreetype.6.dylib
+  if test -f $_wine_brew/lib/libfreetype.6.dylib
 then :
-  ac_cv_lib_soname_freetype=/usr/local/lib/libfreetype.6.dylib
+  ac_cv_lib_soname_freetype=$_wine_brew/lib/libfreetype.6.dylib
 fi
-  if test -f /usr/local/lib/libSDL2-2.0.0.dylib
+  if test -f $_wine_brew/lib/libSDL2-2.0.0.dylib
 then :
-  ac_cv_lib_soname_SDL2=/usr/local/lib/libSDL2-2.0.0.dylib
+  ac_cv_lib_soname_SDL2=$_wine_brew/lib/libSDL2-2.0.0.dylib
 fi
-  if test -f /usr/local/lib/libvulkan.1.dylib
+  if test -f $_wine_brew/lib/libvulkan.1.dylib
 then :
-  ac_cv_lib_soname_vulkan=/usr/local/lib/libvulkan.1.dylib
+  ac_cv_lib_soname_vulkan=$_wine_brew/lib/libvulkan.1.dylib
 fi
-  if test -f /usr/local/lib/libnetapi.1.0.0.dylib
+  if test -f $_wine_brew/lib/libnetapi.1.0.0.dylib
 then :
-  ac_cv_lib_soname_netapi=/usr/local/lib/libnetapi.1.0.0.dylib
+  ac_cv_lib_soname_netapi=$_wine_brew/lib/libnetapi.1.0.0.dylib
 fi
-    _wine_cups=$(ls /usr/local/Cellar/cups/*/lib/libcups.2.dylib 2>/dev/null | sort -V | tail -1)
-  if test -z "$_wine_cups" -a -f /usr/local/lib/libcups.2.dylib
+    _wine_cups=$(ls $_wine_brew/Cellar/cups/*/lib/libcups.2.dylib 2>/dev/null | sort -V | tail -1)
+  if test -z "$_wine_cups" -a -f $_wine_brew/lib/libcups.2.dylib
 then :
-  _wine_cups=/usr/local/lib/libcups.2.dylib
+  _wine_cups=$_wine_brew/lib/libcups.2.dylib
 fi
   if test -n "$_wine_cups"
 then :

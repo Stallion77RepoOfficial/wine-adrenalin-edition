@@ -167,6 +167,31 @@ static void *try_dlopen( const char *argv0 )
     return handle;
 }
 
+#if defined(__APPLE__) && defined(__aarch64__)
+#include <spawn.h>
+
+/* Windows code assumes 4K pages (guard pages, protections, mapping
+ * granularity). macOS can run an arm64 process with 4K pages when it has the
+ * cross-architecture entitlement, so restart with them; without it the spawn
+ * fails and we keep the 16K pages. */
+static void reexec_with_4k_pages( char *argv[] )
+{
+    extern char **environ;
+    posix_spawnattr_t attr;
+    char *path;
+
+    if (getpagesize() == 0x1000 || !(path = get_self_exe())) return;
+    if (!posix_spawnattr_init( &attr ))
+    {
+        if (!posix_spawnattr_setflags( &attr, POSIX_SPAWN_SETEXEC ) &&
+            !posix_spawnattr_set_4k_page_size_np( &attr ))
+            posix_spawn( NULL, path, NULL, &attr, argv, environ );
+        posix_spawnattr_destroy( &attr );
+    }
+    free( path );
+}
+#endif
+
 
 /**********************************************************************
  *           main
@@ -175,6 +200,9 @@ int main( int argc, char *argv[] )
 {
     void *handle;
 
+#if defined(__APPLE__) && defined(__aarch64__)
+    reexec_with_4k_pages( argv );
+#endif
     init_reserved_areas();
 
     if ((handle = try_dlopen( get_self_exe() )) ||

@@ -75,8 +75,21 @@ void WINAPI glArrayElement( GLint i )
 
 void WINAPI glBegin( GLenum mode )
 {
+#if defined(__i386__) && defined(WINE_OPENGL_BATCHING)
+    struct glBegin_params args;
+    NTSTATUS status;
+    struct gl_batch_buffer *buffer;
+
+    if ((buffer = gl_batch_current()))
+    {
+        gl_batch_append( buffer, gl_batch_begin, mode, 0, 0, 0 );
+        return;
+    }
+    args = (struct glBegin_params){ .teb = NtCurrentTeb(), .mode = mode };
+#else
     struct glBegin_params args = { .teb = NtCurrentTeb(), .mode = mode };
     NTSTATUS status;
+#endif
     TRACE( "mode %d\n", mode );
     if ((status = UNIX_CALL( glBegin, &args ))) WARN( "glBegin returned %#lx\n", status );
 }
@@ -214,16 +227,42 @@ void WINAPI glColor3dv( const GLdouble *v )
 
 void WINAPI glColor3f( GLfloat red, GLfloat green, GLfloat blue )
 {
+#if defined(__i386__) && defined(WINE_OPENGL_BATCHING)
+    struct glColor3f_params args;
+    NTSTATUS status;
+    struct gl_batch_buffer *buffer;
+
+    if ((buffer = gl_batch_current()))
+    {
+        gl_batch_append( buffer, gl_batch_color3, gl_batch_float( red ), gl_batch_float( green ), gl_batch_float( blue ), 0 );
+        return;
+    }
+    args = (struct glColor3f_params){ .teb = NtCurrentTeb(), .red = red, .green = green, .blue = blue };
+#else
     struct glColor3f_params args = { .teb = NtCurrentTeb(), .red = red, .green = green, .blue = blue };
     NTSTATUS status;
+#endif
     TRACE( "red %f, green %f, blue %f\n", red, green, blue );
     if ((status = UNIX_CALL( glColor3f, &args ))) WARN( "glColor3f returned %#lx\n", status );
 }
 
 void WINAPI glColor3fv( const GLfloat *v )
 {
+#if defined(__i386__) && defined(WINE_OPENGL_BATCHING)
+    struct glColor3fv_params args;
+    NTSTATUS status;
+    struct gl_batch_buffer *buffer;
+
+    if ((buffer = gl_batch_current()))
+    {
+        gl_batch_append( buffer, gl_batch_color3, gl_batch_word( v, 0 ), gl_batch_word( v, 1 ), gl_batch_word( v, 2 ), 0 );
+        return;
+    }
+    args = (struct glColor3fv_params){ .teb = NtCurrentTeb(), .v = v };
+#else
     struct glColor3fv_params args = { .teb = NtCurrentTeb(), .v = v };
     NTSTATUS status;
+#endif
     TRACE( "v %p\n", v );
     if ((status = UNIX_CALL( glColor3fv, &args ))) WARN( "glColor3fv returned %#lx\n", status );
 }
@@ -342,16 +381,42 @@ void WINAPI glColor4dv( const GLdouble *v )
 
 void WINAPI glColor4f( GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha )
 {
+#if defined(__i386__) && defined(WINE_OPENGL_BATCHING)
+    struct glColor4f_params args;
+    NTSTATUS status;
+    struct gl_batch_buffer *buffer;
+
+    if ((buffer = gl_batch_current()))
+    {
+        gl_batch_append( buffer, gl_batch_color4, gl_batch_float( red ), gl_batch_float( green ), gl_batch_float( blue ), gl_batch_float( alpha ) );
+        return;
+    }
+    args = (struct glColor4f_params){ .teb = NtCurrentTeb(), .red = red, .green = green, .blue = blue, .alpha = alpha };
+#else
     struct glColor4f_params args = { .teb = NtCurrentTeb(), .red = red, .green = green, .blue = blue, .alpha = alpha };
     NTSTATUS status;
+#endif
     TRACE( "red %f, green %f, blue %f, alpha %f\n", red, green, blue, alpha );
     if ((status = UNIX_CALL( glColor4f, &args ))) WARN( "glColor4f returned %#lx\n", status );
 }
 
 void WINAPI glColor4fv( const GLfloat *v )
 {
+#if defined(__i386__) && defined(WINE_OPENGL_BATCHING)
+    struct glColor4fv_params args;
+    NTSTATUS status;
+    struct gl_batch_buffer *buffer;
+
+    if ((buffer = gl_batch_current()))
+    {
+        gl_batch_append( buffer, gl_batch_color4, gl_batch_word( v, 0 ), gl_batch_word( v, 1 ), gl_batch_word( v, 2 ), gl_batch_word( v, 3 ) );
+        return;
+    }
+    args = (struct glColor4fv_params){ .teb = NtCurrentTeb(), .v = v };
+#else
     struct glColor4fv_params args = { .teb = NtCurrentTeb(), .v = v };
     NTSTATUS status;
+#endif
     TRACE( "v %p\n", v );
     if ((status = UNIX_CALL( glColor4fv, &args ))) WARN( "glColor4fv returned %#lx\n", status );
 }
@@ -390,16 +455,42 @@ void WINAPI glColor4sv( const GLshort *v )
 
 void WINAPI glColor4ub( GLubyte red, GLubyte green, GLubyte blue, GLubyte alpha )
 {
+#if defined(__i386__) && defined(WINE_OPENGL_BATCHING)
+    struct glColor4ub_params args;
+    NTSTATUS status;
+    struct gl_batch_buffer *buffer;
+
+    if ((buffer = gl_batch_current()))
+    {
+        gl_batch_append( buffer, gl_batch_color4ub, (UINT)red | ((UINT)green << 8) | ((UINT)blue << 16) | ((UINT)alpha << 24), 0, 0, 0 );
+        return;
+    }
+    args = (struct glColor4ub_params){ .teb = NtCurrentTeb(), .red = red, .green = green, .blue = blue, .alpha = alpha };
+#else
     struct glColor4ub_params args = { .teb = NtCurrentTeb(), .red = red, .green = green, .blue = blue, .alpha = alpha };
     NTSTATUS status;
+#endif
     TRACE( "red %d, green %d, blue %d, alpha %d\n", red, green, blue, alpha );
     if ((status = UNIX_CALL( glColor4ub, &args ))) WARN( "glColor4ub returned %#lx\n", status );
 }
 
 void WINAPI glColor4ubv( const GLubyte *v )
 {
+#if defined(__i386__) && defined(WINE_OPENGL_BATCHING)
+    struct glColor4ubv_params args;
+    NTSTATUS status;
+    struct gl_batch_buffer *buffer;
+
+    if ((buffer = gl_batch_current()))
+    {
+        gl_batch_append( buffer, gl_batch_color4ub, gl_batch_word( v, 0 ), 0, 0, 0 );
+        return;
+    }
+    args = (struct glColor4ubv_params){ .teb = NtCurrentTeb(), .v = v };
+#else
     struct glColor4ubv_params args = { .teb = NtCurrentTeb(), .v = v };
     NTSTATUS status;
+#endif
     TRACE( "v %p\n", v );
     if ((status = UNIX_CALL( glColor4ubv, &args ))) WARN( "glColor4ubv returned %#lx\n", status );
 }
@@ -643,8 +734,21 @@ void WINAPI glEnableClientState( GLenum array )
 
 void WINAPI glEnd(void)
 {
+#if defined(__i386__) && defined(WINE_OPENGL_BATCHING)
+    struct glEnd_params args;
+    NTSTATUS status;
+    struct gl_batch_buffer *buffer;
+
+    if ((buffer = gl_batch_current()))
+    {
+        gl_batch_append( buffer, gl_batch_end, 0, 0, 0, 0 );
+        return;
+    }
+    args = (struct glEnd_params){ .teb = NtCurrentTeb() };
+#else
     struct glEnd_params args = { .teb = NtCurrentTeb() };
     NTSTATUS status;
+#endif
     TRACE( "\n" );
     if ((status = UNIX_CALL( glEnd, &args ))) WARN( "glEnd returned %#lx\n", status );
 }
@@ -1525,16 +1629,42 @@ void WINAPI glNormal3dv( const GLdouble *v )
 
 void WINAPI glNormal3f( GLfloat nx, GLfloat ny, GLfloat nz )
 {
+#if defined(__i386__) && defined(WINE_OPENGL_BATCHING)
+    struct glNormal3f_params args;
+    NTSTATUS status;
+    struct gl_batch_buffer *buffer;
+
+    if ((buffer = gl_batch_current()))
+    {
+        gl_batch_append( buffer, gl_batch_normal3, gl_batch_float( nx ), gl_batch_float( ny ), gl_batch_float( nz ), 0 );
+        return;
+    }
+    args = (struct glNormal3f_params){ .teb = NtCurrentTeb(), .nx = nx, .ny = ny, .nz = nz };
+#else
     struct glNormal3f_params args = { .teb = NtCurrentTeb(), .nx = nx, .ny = ny, .nz = nz };
     NTSTATUS status;
+#endif
     TRACE( "nx %f, ny %f, nz %f\n", nx, ny, nz );
     if ((status = UNIX_CALL( glNormal3f, &args ))) WARN( "glNormal3f returned %#lx\n", status );
 }
 
 void WINAPI glNormal3fv( const GLfloat *v )
 {
+#if defined(__i386__) && defined(WINE_OPENGL_BATCHING)
+    struct glNormal3fv_params args;
+    NTSTATUS status;
+    struct gl_batch_buffer *buffer;
+
+    if ((buffer = gl_batch_current()))
+    {
+        gl_batch_append( buffer, gl_batch_normal3, gl_batch_word( v, 0 ), gl_batch_word( v, 1 ), gl_batch_word( v, 2 ), 0 );
+        return;
+    }
+    args = (struct glNormal3fv_params){ .teb = NtCurrentTeb(), .v = v };
+#else
     struct glNormal3fv_params args = { .teb = NtCurrentTeb(), .v = v };
     NTSTATUS status;
+#endif
     TRACE( "v %p\n", v );
     if ((status = UNIX_CALL( glNormal3fv, &args ))) WARN( "glNormal3fv returned %#lx\n", status );
 }
@@ -2210,16 +2340,42 @@ void WINAPI glTexCoord2dv( const GLdouble *v )
 
 void WINAPI glTexCoord2f( GLfloat s, GLfloat t )
 {
+#if defined(__i386__) && defined(WINE_OPENGL_BATCHING)
+    struct glTexCoord2f_params args;
+    NTSTATUS status;
+    struct gl_batch_buffer *buffer;
+
+    if ((buffer = gl_batch_current()))
+    {
+        gl_batch_append( buffer, gl_batch_tex2, gl_batch_float( s ), gl_batch_float( t ), 0, 0 );
+        return;
+    }
+    args = (struct glTexCoord2f_params){ .teb = NtCurrentTeb(), .s = s, .t = t };
+#else
     struct glTexCoord2f_params args = { .teb = NtCurrentTeb(), .s = s, .t = t };
     NTSTATUS status;
+#endif
     TRACE( "s %f, t %f\n", s, t );
     if ((status = UNIX_CALL( glTexCoord2f, &args ))) WARN( "glTexCoord2f returned %#lx\n", status );
 }
 
 void WINAPI glTexCoord2fv( const GLfloat *v )
 {
+#if defined(__i386__) && defined(WINE_OPENGL_BATCHING)
+    struct glTexCoord2fv_params args;
+    NTSTATUS status;
+    struct gl_batch_buffer *buffer;
+
+    if ((buffer = gl_batch_current()))
+    {
+        gl_batch_append( buffer, gl_batch_tex2, gl_batch_word( v, 0 ), gl_batch_word( v, 1 ), 0, 0 );
+        return;
+    }
+    args = (struct glTexCoord2fv_params){ .teb = NtCurrentTeb(), .v = v };
+#else
     struct glTexCoord2fv_params args = { .teb = NtCurrentTeb(), .v = v };
     NTSTATUS status;
+#endif
     TRACE( "v %p\n", v );
     if ((status = UNIX_CALL( glTexCoord2fv, &args ))) WARN( "glTexCoord2fv returned %#lx\n", status );
 }
@@ -2570,16 +2726,42 @@ void WINAPI glVertex2dv( const GLdouble *v )
 
 void WINAPI glVertex2f( GLfloat x, GLfloat y )
 {
+#if defined(__i386__) && defined(WINE_OPENGL_BATCHING)
+    struct glVertex2f_params args;
+    NTSTATUS status;
+    struct gl_batch_buffer *buffer;
+
+    if ((buffer = gl_batch_current()))
+    {
+        gl_batch_append( buffer, gl_batch_vertex2, gl_batch_float( x ), gl_batch_float( y ), 0, 0 );
+        return;
+    }
+    args = (struct glVertex2f_params){ .teb = NtCurrentTeb(), .x = x, .y = y };
+#else
     struct glVertex2f_params args = { .teb = NtCurrentTeb(), .x = x, .y = y };
     NTSTATUS status;
+#endif
     TRACE( "x %f, y %f\n", x, y );
     if ((status = UNIX_CALL( glVertex2f, &args ))) WARN( "glVertex2f returned %#lx\n", status );
 }
 
 void WINAPI glVertex2fv( const GLfloat *v )
 {
+#if defined(__i386__) && defined(WINE_OPENGL_BATCHING)
+    struct glVertex2fv_params args;
+    NTSTATUS status;
+    struct gl_batch_buffer *buffer;
+
+    if ((buffer = gl_batch_current()))
+    {
+        gl_batch_append( buffer, gl_batch_vertex2, gl_batch_word( v, 0 ), gl_batch_word( v, 1 ), 0, 0 );
+        return;
+    }
+    args = (struct glVertex2fv_params){ .teb = NtCurrentTeb(), .v = v };
+#else
     struct glVertex2fv_params args = { .teb = NtCurrentTeb(), .v = v };
     NTSTATUS status;
+#endif
     TRACE( "v %p\n", v );
     if ((status = UNIX_CALL( glVertex2fv, &args ))) WARN( "glVertex2fv returned %#lx\n", status );
 }
@@ -2634,16 +2816,42 @@ void WINAPI glVertex3dv( const GLdouble *v )
 
 void WINAPI glVertex3f( GLfloat x, GLfloat y, GLfloat z )
 {
+#if defined(__i386__) && defined(WINE_OPENGL_BATCHING)
+    struct glVertex3f_params args;
+    NTSTATUS status;
+    struct gl_batch_buffer *buffer;
+
+    if ((buffer = gl_batch_current()))
+    {
+        gl_batch_append( buffer, gl_batch_vertex3, gl_batch_float( x ), gl_batch_float( y ), gl_batch_float( z ), 0 );
+        return;
+    }
+    args = (struct glVertex3f_params){ .teb = NtCurrentTeb(), .x = x, .y = y, .z = z };
+#else
     struct glVertex3f_params args = { .teb = NtCurrentTeb(), .x = x, .y = y, .z = z };
     NTSTATUS status;
+#endif
     TRACE( "x %f, y %f, z %f\n", x, y, z );
     if ((status = UNIX_CALL( glVertex3f, &args ))) WARN( "glVertex3f returned %#lx\n", status );
 }
 
 void WINAPI glVertex3fv( const GLfloat *v )
 {
+#if defined(__i386__) && defined(WINE_OPENGL_BATCHING)
+    struct glVertex3fv_params args;
+    NTSTATUS status;
+    struct gl_batch_buffer *buffer;
+
+    if ((buffer = gl_batch_current()))
+    {
+        gl_batch_append( buffer, gl_batch_vertex3, gl_batch_word( v, 0 ), gl_batch_word( v, 1 ), gl_batch_word( v, 2 ), 0 );
+        return;
+    }
+    args = (struct glVertex3fv_params){ .teb = NtCurrentTeb(), .v = v };
+#else
     struct glVertex3fv_params args = { .teb = NtCurrentTeb(), .v = v };
     NTSTATUS status;
+#endif
     TRACE( "v %p\n", v );
     if ((status = UNIX_CALL( glVertex3fv, &args ))) WARN( "glVertex3fv returned %#lx\n", status );
 }
@@ -2698,16 +2906,42 @@ void WINAPI glVertex4dv( const GLdouble *v )
 
 void WINAPI glVertex4f( GLfloat x, GLfloat y, GLfloat z, GLfloat w )
 {
+#if defined(__i386__) && defined(WINE_OPENGL_BATCHING)
+    struct glVertex4f_params args;
+    NTSTATUS status;
+    struct gl_batch_buffer *buffer;
+
+    if ((buffer = gl_batch_current()))
+    {
+        gl_batch_append( buffer, gl_batch_vertex4, gl_batch_float( x ), gl_batch_float( y ), gl_batch_float( z ), gl_batch_float( w ) );
+        return;
+    }
+    args = (struct glVertex4f_params){ .teb = NtCurrentTeb(), .x = x, .y = y, .z = z, .w = w };
+#else
     struct glVertex4f_params args = { .teb = NtCurrentTeb(), .x = x, .y = y, .z = z, .w = w };
     NTSTATUS status;
+#endif
     TRACE( "x %f, y %f, z %f, w %f\n", x, y, z, w );
     if ((status = UNIX_CALL( glVertex4f, &args ))) WARN( "glVertex4f returned %#lx\n", status );
 }
 
 void WINAPI glVertex4fv( const GLfloat *v )
 {
+#if defined(__i386__) && defined(WINE_OPENGL_BATCHING)
+    struct glVertex4fv_params args;
+    NTSTATUS status;
+    struct gl_batch_buffer *buffer;
+
+    if ((buffer = gl_batch_current()))
+    {
+        gl_batch_append( buffer, gl_batch_vertex4, gl_batch_word( v, 0 ), gl_batch_word( v, 1 ), gl_batch_word( v, 2 ), gl_batch_word( v, 3 ) );
+        return;
+    }
+    args = (struct glVertex4fv_params){ .teb = NtCurrentTeb(), .v = v };
+#else
     struct glVertex4fv_params args = { .teb = NtCurrentTeb(), .v = v };
     NTSTATUS status;
+#endif
     TRACE( "v %p\n", v );
     if ((status = UNIX_CALL( glVertex4fv, &args ))) WARN( "glVertex4fv returned %#lx\n", status );
 }
@@ -5732,6 +5966,10 @@ static void WINAPI glDebugMessageCallback( GLDEBUGPROC callback, const void *use
 {
     struct glDebugMessageCallback_params args = { .teb = NtCurrentTeb(), .callback = callback, .userParam = userParam };
     NTSTATUS status;
+
+#if defined(__i386__) && defined(WINE_OPENGL_BATCHING)
+    gl_batch_disable();
+#endif
     TRACE( "callback %p, userParam %p\n", callback, userParam );
     if ((status = UNIX_CALL( glDebugMessageCallback, &args ))) WARN( "glDebugMessageCallback returned %#lx\n", status );
 }
@@ -5740,6 +5978,10 @@ static void WINAPI glDebugMessageCallbackAMD( GLDEBUGPROCAMD callback, void *use
 {
     struct glDebugMessageCallbackAMD_params args = { .teb = NtCurrentTeb(), .callback = callback, .userParam = userParam };
     NTSTATUS status;
+
+#if defined(__i386__) && defined(WINE_OPENGL_BATCHING)
+    gl_batch_disable();
+#endif
     TRACE( "callback %p, userParam %p\n", callback, userParam );
     if ((status = UNIX_CALL( glDebugMessageCallbackAMD, &args ))) WARN( "glDebugMessageCallbackAMD returned %#lx\n", status );
 }
@@ -5748,6 +5990,10 @@ static void WINAPI glDebugMessageCallbackARB( GLDEBUGPROCARB callback, const voi
 {
     struct glDebugMessageCallbackARB_params args = { .teb = NtCurrentTeb(), .callback = callback, .userParam = userParam };
     NTSTATUS status;
+
+#if defined(__i386__) && defined(WINE_OPENGL_BATCHING)
+    gl_batch_disable();
+#endif
     TRACE( "callback %p, userParam %p\n", callback, userParam );
     if ((status = UNIX_CALL( glDebugMessageCallbackARB, &args ))) WARN( "glDebugMessageCallbackARB returned %#lx\n", status );
 }
@@ -13987,24 +14233,63 @@ static void WINAPI glMultiTexCoord2dvSGIS( GLenum target, GLdouble * v )
 
 static void WINAPI glMultiTexCoord2f( GLenum target, GLfloat s, GLfloat t )
 {
+#if defined(__i386__) && defined(WINE_OPENGL_BATCHING)
+    struct glMultiTexCoord2f_params args;
+    NTSTATUS status;
+    struct gl_batch_buffer *buffer;
+
+    if ((buffer = gl_batch_current()))
+    {
+        gl_batch_append( buffer, gl_batch_multi2, target, gl_batch_float( s ), gl_batch_float( t ), 0 );
+        return;
+    }
+    args = (struct glMultiTexCoord2f_params){ .teb = NtCurrentTeb(), .target = target, .s = s, .t = t };
+#else
     struct glMultiTexCoord2f_params args = { .teb = NtCurrentTeb(), .target = target, .s = s, .t = t };
     NTSTATUS status;
+#endif
     TRACE( "target %d, s %f, t %f\n", target, s, t );
     if ((status = UNIX_CALL( glMultiTexCoord2f, &args ))) WARN( "glMultiTexCoord2f returned %#lx\n", status );
 }
 
 static void WINAPI glMultiTexCoord2fARB( GLenum target, GLfloat s, GLfloat t )
 {
+#if defined(__i386__) && defined(WINE_OPENGL_BATCHING)
+    struct glMultiTexCoord2fARB_params args;
+    NTSTATUS status;
+    struct gl_batch_buffer *buffer;
+
+    if ((buffer = gl_batch_current()))
+    {
+        gl_batch_append( buffer, gl_batch_multi2arb, target, gl_batch_float( s ), gl_batch_float( t ), 0 );
+        return;
+    }
+    args = (struct glMultiTexCoord2fARB_params){ .teb = NtCurrentTeb(), .target = target, .s = s, .t = t };
+#else
     struct glMultiTexCoord2fARB_params args = { .teb = NtCurrentTeb(), .target = target, .s = s, .t = t };
     NTSTATUS status;
+#endif
     TRACE( "target %d, s %f, t %f\n", target, s, t );
     if ((status = UNIX_CALL( glMultiTexCoord2fARB, &args ))) WARN( "glMultiTexCoord2fARB returned %#lx\n", status );
 }
 
 static void WINAPI glMultiTexCoord2fSGIS( GLenum target, GLfloat s, GLfloat t )
 {
+#if defined(__i386__) && defined(WINE_OPENGL_BATCHING)
+    struct glMultiTexCoord2fSGIS_params args;
+    NTSTATUS status;
+    struct gl_batch_buffer *buffer;
+
+    if ((buffer = gl_batch_current()))
+    {
+        gl_batch_append( buffer, gl_batch_multi2sgis, target, gl_batch_float( s ), gl_batch_float( t ), 0 );
+        return;
+    }
+    args = (struct glMultiTexCoord2fSGIS_params){ .teb = NtCurrentTeb(), .target = target, .s = s, .t = t };
+#else
     struct glMultiTexCoord2fSGIS_params args = { .teb = NtCurrentTeb(), .target = target, .s = s, .t = t };
     NTSTATUS status;
+#endif
     TRACE( "target %d, s %f, t %f\n", target, s, t );
     if ((status = UNIX_CALL( glMultiTexCoord2fSGIS, &args ))) WARN( "glMultiTexCoord2fSGIS returned %#lx\n", status );
 }

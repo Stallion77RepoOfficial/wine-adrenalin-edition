@@ -27,6 +27,7 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <string.h>
 
 #include <pthread.h>
 
@@ -2534,4 +2535,66 @@ NTSTATUS wow64_get_pixel_formats( void *args )
     return status;
 }
 
+#endif
+
+
+/* Legacy client calls carry values, never pointers into the application's arrays. */
+NTSTATUS gl_batch_unavailable( void *args )
+{
+    return STATUS_NOT_IMPLEMENTED;
+}
+
+#ifdef _WIN64
+NTSTATUS wow64_gl_batch( void *args )
+{
+    struct gl_batch_buffer *buffer = args;
+    const struct opengl_funcs *funcs;
+    NTSTATUS status = STATUS_SUCCESS;
+    TEB *teb;
+    UINT i;
+
+    C_ASSERT(sizeof(struct gl_batch_command) == 20);
+    C_ASSERT(offsetof(struct gl_batch_buffer, commands) == 12);
+    if (!buffer->teb || buffer->count > GL_BATCH_CAPACITY) return STATUS_INVALID_PARAMETER;
+    teb = get_teb64( buffer->teb );
+    funcs = teb->glTable;
+    if (!funcs) return STATUS_INVALID_HANDLE;
+    for (i = 0; i < buffer->count; ++i)
+    {
+        const struct gl_batch_command *command = &buffer->commands[i];
+        GLfloat f[4];
+        memcpy( f, command->value, sizeof(f) );
+        switch (command->code)
+        {
+        case gl_batch_begin: funcs->p_glBegin( command->value[0] ); break;
+        case gl_batch_end: funcs->p_glEnd(); break;
+        case gl_batch_vertex2: funcs->p_glVertex2fv( f ); break;
+        case gl_batch_vertex3: funcs->p_glVertex3fv( f ); break;
+        case gl_batch_vertex4: funcs->p_glVertex4fv( f ); break;
+        case gl_batch_tex2: funcs->p_glTexCoord2fv( f ); break;
+        case gl_batch_normal3: funcs->p_glNormal3fv( f ); break;
+        case gl_batch_color3: funcs->p_glColor3fv( f ); break;
+        case gl_batch_color4: funcs->p_glColor4fv( f ); break;
+        case gl_batch_color4ub:
+            funcs->p_glColor4ub( command->value[0] & 255, (command->value[0] >> 8) & 255,
+                    (command->value[0] >> 16) & 255, command->value[0] >> 24 );
+            break;
+        case gl_batch_multi2:
+            if (funcs->p_glMultiTexCoord2f) funcs->p_glMultiTexCoord2f( command->value[0], f[1], f[2] );
+            else status = STATUS_NOT_IMPLEMENTED;
+            break;
+        case gl_batch_multi2arb:
+            if (funcs->p_glMultiTexCoord2fARB) funcs->p_glMultiTexCoord2fARB( command->value[0], f[1], f[2] );
+            else status = STATUS_NOT_IMPLEMENTED;
+            break;
+        case gl_batch_multi2sgis:
+            if (funcs->p_glMultiTexCoord2fSGIS) funcs->p_glMultiTexCoord2fSGIS( command->value[0], f[1], f[2] );
+            else status = STATUS_NOT_IMPLEMENTED;
+            break;
+        default: status = STATUS_INVALID_PARAMETER; break;
+        }
+    }
+    set_context_attribute( teb, -1, NULL, 0 );
+    return status;
+}
 #endif

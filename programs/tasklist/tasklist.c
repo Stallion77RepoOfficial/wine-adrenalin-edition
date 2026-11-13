@@ -416,8 +416,12 @@ int __cdecl wmain(int argc, WCHAR *argv[])
                 goto done;
             }
 
-            filter->value = wcstok(NULL, L" ", &buffer);
-            if (!filter->value)
+            /* The operand is the rest of the filter, including spaces in
+             * executable or session names. Only its leading whitespace is
+             * syntax; splitting it again silently changes the comparison. */
+            filter->value = buffer;
+            if (filter->value) while (*filter->value == ' ') ++filter->value;
+            if (!filter->value || !*filter->value)
             {
                 tasklist_error(STRING_FILTER_NOT_RECOGNIZED);
                 free(filter);

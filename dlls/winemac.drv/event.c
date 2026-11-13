@@ -321,6 +321,17 @@ static void macdrv_query_event(HWND hwnd, const macdrv_event *event)
 {
     BOOL success = FALSE;
     macdrv_query *query = event->query_event.query;
+    struct macdrv_thread_data *thread_data = macdrv_thread_data();
+
+    if (thread_data && thread_data->changing_display_mode &&
+        (query->type == QUERY_RESIZE_SIZE || query->type == QUERY_RESIZE_START ||
+         query->type == QUERY_MIN_MAX_INFO))
+    {
+        TRACE("refusing query %d during display mode change\n", query->type);
+        query->status = FALSE;
+        macdrv_set_query_done(query);
+        return;
+    }
 
     switch (query->type)
     {

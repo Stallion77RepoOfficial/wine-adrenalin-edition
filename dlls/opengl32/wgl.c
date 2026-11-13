@@ -40,6 +40,34 @@
 WINE_DEFAULT_DEBUG_CHANNEL(opengl);
 WINE_DECLARE_DEBUG_CHANNEL(fps);
 
+
+#if defined(__i386__) && defined(WINE_OPENGL_BATCHING)
+static BOOL gl_batch_enabled;
+volatile LONG gl_batch_disabled;
+
+void gl_batch_flush( struct gl_batch_buffer *buffer )
+{
+    NTSTATUS status;
+    if (!buffer || !buffer->count || buffer->flushing) return;
+    buffer->flushing = TRUE;
+    status = WINE_UNIX_CALL( unix_gl_batch, buffer );
+    buffer->count = 0;
+    buffer->flushing = FALSE;
+    if (status)
+    {
+        InterlockedExchange( &gl_batch_disabled, TRUE );
+        WARN( "Disabling immediate-mode batching after status %#lx\n", status );
+    }
+}
+
+void gl_batch_disable(void)
+{
+    /* Synchronous debug callbacks must run at the original API call site. */
+    gl_batch_barrier();
+    InterlockedExchange( &gl_batch_disabled, TRUE );
+}
+#endif
+
 static const MAT2 identity = { {0,1},{0,0},{0,0},{0,1} };
 
 #define WINE_GL_RESERVED_FORMATS_HDC      2
@@ -785,6 +813,7 @@ void WINAPI glGetFramebufferAttachmentParameteriv( GLenum target, GLenum attachm
     struct glGetFramebufferAttachmentParameteriv_params args = { .teb = NtCurrentTeb(), .target = target, .attachment = attachment, .pname = pname, .params = params };
     NTSTATUS status;
 
+    GL_BATCH_BARRIER();
     TRACE( "target %d, attachment %d, pname %d, params %p\n", target, attachment, pname, params );
 
     if ((status = UNIX_CALL( glGetFramebufferAttachmentParameteriv, &args ))) WARN( "glGetFramebufferAttachmentParameteriv returned %#lx\n", status );
@@ -796,6 +825,7 @@ void WINAPI glGetFramebufferAttachmentParameterivEXT( GLenum target, GLenum atta
     struct glGetFramebufferAttachmentParameterivEXT_params args = { .teb = NtCurrentTeb(), .target = target, .attachment = attachment, .pname = pname, .params = params };
     NTSTATUS status;
 
+    GL_BATCH_BARRIER();
     TRACE( "target %d, attachment %d, pname %d, params %p\n", target, attachment, pname, params );
 
     if ((status = UNIX_CALL( glGetFramebufferAttachmentParameterivEXT, &args ))) WARN( "glGetFramebufferAttachmentParameterivEXT returned %#lx\n", status );
@@ -818,6 +848,7 @@ void WINAPI glGetNamedFramebufferAttachmentParameteriv( GLuint framebuffer, GLen
     GLuint host_framebuffer = framebuffer;
     NTSTATUS status;
 
+    GL_BATCH_BARRIER();
     TRACE( "framebuffer %d, attachment %d, pname %d, params %p\n", framebuffer, attachment, pname, params );
 
     args.framebuffer = *map_context_objects( OBJ_TYPE_FRAMEBUFFER, 1, &host_framebuffer );
@@ -831,6 +862,7 @@ void WINAPI glGetNamedFramebufferAttachmentParameterivEXT( GLuint framebuffer, G
     GLuint host_framebuffer = framebuffer;
     NTSTATUS status;
 
+    GL_BATCH_BARRIER();
     TRACE( "framebuffer %d, attachment %d, pname %d, params %p\n", framebuffer, attachment, pname, params );
 
     if (!alloc_context_objects( OBJ_TYPE_FRAMEBUFFER, 1, &host_framebuffer, TRUE )) return;
@@ -2501,6 +2533,7 @@ GLsync WINAPI glCreateSyncFromCLeventARB( struct _cl_context *context, struct _c
     struct context *ctx;
     NTSTATUS status;
 
+    GL_BATCH_BARRIER();
     TRACE( "context %p, event %p, flags %d\n", context, event, flags );
 
     if (!(ctx = context_from_handle( teb->glCurrentRC ))) return NULL;
@@ -2523,6 +2556,7 @@ void WINAPI glDeleteSync( GLsync sync )
     struct context *ctx;
     NTSTATUS status;
 
+    GL_BATCH_BARRIER();
     TRACE( "sync %p\n", sync );
 
     if (!(ctx = context_from_handle( teb->glCurrentRC ))) return;
@@ -2541,6 +2575,7 @@ GLsync WINAPI glFenceSync( GLenum condition, GLbitfield flags )
     struct context *ctx;
     NTSTATUS status;
 
+    GL_BATCH_BARRIER();
     TRACE( "condition %d, flags %d\n", condition, flags );
 
     if (!(ctx = context_from_handle( teb->glCurrentRC ))) return NULL;
@@ -2563,6 +2598,7 @@ GLsync WINAPI glImportSyncEXT( GLenum external_sync_type, GLintptr external_sync
     struct context *ctx;
     NTSTATUS status;
 
+    GL_BATCH_BARRIER();
     TRACE( "external_sync_type %d, external_sync %Id, flags %d\n", external_sync_type, external_sync, flags );
 
     if (!(ctx = context_from_handle( teb->glCurrentRC ))) return NULL;
@@ -2616,6 +2652,7 @@ const GLubyte * WINAPI glGetStringi( GLenum name, GLuint index )
     GLubyte *wow64_str = NULL;
 #endif
 
+    GL_BATCH_BARRIER();
     TRACE( "name %d, index %d\n", name, index );
 
     if (!(ctx = context_from_handle( NtCurrentTeb()->glCurrentRC ))) return NULL;
@@ -2651,6 +2688,7 @@ const GLubyte * WINAPI glGetString( GLenum name )
     GLubyte *wow64_str = NULL;
 #endif
 
+    GL_BATCH_BARRIER();
     TRACE( "name %d\n", name );
 
 #ifndef _WIN64
@@ -2757,6 +2795,13 @@ BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, LPVOID reserved )
             return FALSE;
         }
 
+#if defined(__i386__) && defined(WINE_OPENGL_BATCHING)
+        {
+            char enabled[2] = {0};
+            gl_batch_enabled = NtCurrentTeb()->WowTebOffset && !TRACE_ON(opengl) &&
+                GetEnvironmentVariableA( "WINE_GL_BATCHING", enabled, sizeof(enabled) ) == 1 && enabled[0] == '1';
+        }
+#endif
         /* fallthrough */
     case DLL_THREAD_ATTACH:
         if ((status = UNIX_CALL( thread_attach, NtCurrentTeb() )))
@@ -2764,16 +2809,32 @@ BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, LPVOID reserved )
             WARN( "Failed to initialize thread, status %#lx\n", status );
             return FALSE;
         }
+#if defined(__i386__) && defined(WINE_OPENGL_BATCHING)
+        if (gl_batch_enabled)
+        {
+            struct gl_batch_buffer *buffer = calloc( 1, sizeof(*buffer) );
+            if (buffer) buffer->teb = PtrToUlong( NtCurrentTeb() );
+            NtCurrentTeb()->glReserved1[GL_BATCH_TEB_SLOT] = buffer;
+        }
+#endif
         break;
 
     case DLL_PROCESS_DETACH:
         if (reserved) break;
+#if defined(__i386__) && defined(WINE_OPENGL_BATCHING)
+        gl_batch_barrier();
+#endif
         UNIX_CALL( process_detach, NULL );
 #ifndef _WIN64
         cleanup_wow64_strings();
 #endif
         /* fallthrough */
     case DLL_THREAD_DETACH:
+#if defined(__i386__) && defined(WINE_OPENGL_BATCHING)
+        gl_batch_barrier();
+        free( NtCurrentTeb()->glReserved1[GL_BATCH_TEB_SLOT] );
+        NtCurrentTeb()->glReserved1[GL_BATCH_TEB_SLOT] = NULL;
+#endif
         free( NtCurrentTeb()->glReserved1[WINE_GL_RESERVED_FORMATS_PTR] );
         return TRUE;
     }

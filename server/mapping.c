@@ -1729,6 +1729,14 @@ done:
     release_object( mapping );
 }
 
+/* An IL-only image built for any CPU runs as the host's 64-bit machine. On ARM64 that is x86-64,
+ * as on ARM64 Windows before .NET Framework 4.8.1: Wine Mono has no ARM64 runtime, and the
+ * x86-64 one runs under the x86-64 emulator. */
+static unsigned short get_il_only_machine(void)
+{
+    return native_machine == IMAGE_FILE_MACHINE_ARM64 ? IMAGE_FILE_MACHINE_AMD64 : native_machine;
+}
+
 /* add a memory view for an image mapping in the current process */
 DECL_HANDLER(map_image_view)
 {
@@ -1764,7 +1772,7 @@ DECL_HANDLER(map_image_view)
         {
             current->entry_point = view->base + req->entry;
             current->process->machine = (view->image.image_flags & IMAGE_FLAGS_ComPlusNativeReady) ?
-                                         native_machine : req->machine;
+                                         get_il_only_machine() : req->machine;
         }
 
         if (view->base != (mapping->image.map_addr ? mapping->image.map_addr : mapping->image.base) + req->offset)

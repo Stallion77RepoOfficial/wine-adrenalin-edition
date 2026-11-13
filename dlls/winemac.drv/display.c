@@ -793,10 +793,22 @@ LONG macdrv_ChangeDisplaySettings(LPDEVMODEW displays, LPCWSTR primary_name, HWN
                 bpp, mode->dmDisplayFrequency);
             ret = DISP_CHANGE_BADMODE;
         }
-        else if (!macdrv_set_display_mode(CGMainDisplayID(), best_display_mode))
+        else
         {
-            WARN("Failed to set display mode\n");
-            ret = DISP_CHANGE_FAILED;
+            /* win32u holds the display device lock across this call.  While the main thread
+               switches modes, Cocoa may resize windows and send us queries whose handlers
+               need that same lock; mark the thread so they are refused instead of deadlocking. */
+            struct macdrv_thread_data *thread_data = macdrv_thread_data();
+            int ok;
+
+            if (thread_data) thread_data->changing_display_mode = TRUE;
+            ok = macdrv_set_display_mode(CGMainDisplayID(), best_display_mode);
+            if (thread_data) thread_data->changing_display_mode = FALSE;
+            if (!ok)
+            {
+                WARN("Failed to set display mode\n");
+                ret = DISP_CHANGE_FAILED;
+            }
         }
     }
 

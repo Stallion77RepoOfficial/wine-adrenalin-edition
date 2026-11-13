@@ -44,5 +44,7 @@ int __cdecl wmain(int argc, WCHAR *argv[])
             }
         }
     }
-    return 0;
+    /* No commands have been evaluated. Reporting success makes capability
+     * probes and installer process checks take a false positive branch. */
+    return 1;
 }

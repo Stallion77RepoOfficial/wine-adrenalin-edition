@@ -1621,7 +1621,7 @@ BOOL macdrv_GetWindowStyleMasks(HWND hwnd, UINT style, UINT ex_style, UINT *styl
 {
     struct macdrv_window_features wf = get_window_features_for_style(style, ex_style, FALSE);
 
-    *style_mask = ex_style = 0;
+    *style_mask = *ex_style_mask = 0;
     if (wf.title_bar)
     {
         *style_mask |= WS_CAPTION;
@@ -2219,3 +2219,42 @@ void init_win_context(void)
     pthread_mutex_init(&win_data_mutex, &attr);
     pthread_mutexattr_destroy(&attr);
 }
+
+
+/* DXMT's winemetal.so finds this table with dlsym(RTLD_DEFAULT, "macdrv_functions")
+ * to attach a CAMetalLayer to a window. The slot order is ABI shared with
+ * struct macdrv_functions_t in DXMT's winemetal_unix.c: only ever append. */
+struct macdrv_functions_t
+{
+    void (*macdrv_init_display_devices)(BOOL);
+    struct macdrv_win_data *(*get_win_data)(HWND hwnd);
+    void (*release_win_data)(struct macdrv_win_data *data);
+    macdrv_window (*macdrv_get_cocoa_window)(HWND hwnd, BOOL require_on_screen);
+    macdrv_metal_device (*macdrv_create_metal_device)(void);
+    void (*macdrv_release_metal_device)(macdrv_metal_device d);
+    macdrv_metal_view (*macdrv_view_create_metal_view)(macdrv_view v, macdrv_metal_device d);
+    macdrv_metal_layer (*macdrv_view_get_metal_layer)(macdrv_metal_view v);
+    void (*macdrv_view_release_metal_view)(macdrv_metal_view v);
+    void *on_main_thread;
+    macdrv_view (*macdrv_window_get_content_view)(macdrv_window w);
+};
+
+/* Tells DXMT that get_win_data returns this driver's own struct macdrv_win_data
+ * (and that macdrv_functions has the content-view slot), not the layout
+ * D3DMetal fixed. */
+__attribute__((visibility("default"))) const int macdrv_win_data_native = 1;
+
+__attribute__((visibility("default"))) struct macdrv_functions_t macdrv_functions =
+{
+    NULL,
+    get_win_data,
+    release_win_data,
+    macdrv_get_cocoa_window,
+    macdrv_create_metal_device,
+    macdrv_release_metal_device,
+    macdrv_view_create_metal_view,
+    macdrv_view_get_metal_layer,
+    macdrv_view_release_metal_view,
+    NULL,
+    macdrv_window_get_content_view,
+};

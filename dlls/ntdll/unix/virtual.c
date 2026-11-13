@@ -144,6 +144,7 @@ struct file_view
 #define VPROT_PLACEHOLDER      0x0400
 #define VPROT_FREE_PLACEHOLDER 0x0800
 #define VPROT_NATIVE           0x1000
+#define VPROT_HOST_JIT         0x2000  /* MAP_JIT memory, always RWX on the host (Apple silicon) */
 
 /* Conversion from VPROT_* to Win32 flags */
 static const BYTE VIRTUAL_Win32Flags[16] =
@@ -632,6 +633,32 @@ static void *anon_mmap_tryfixed( void *start, size_t size, int prot, int flags )
     return ptr;
 }
 
+#if defined(__APPLE__) && defined(__aarch64__)
+/* With the cross-architecture entitlement, the kernel leaves the __PAGEZERO
+ * below the main image as an inaccessible mapping that may be replaced,
+ * instead of an unmappable range. Records where it ended at startup. */
+static BOOL is_soft_pagezero( mach_vm_address_t addr )
+{
+    static mach_vm_address_t pagezero_end = ~(mach_vm_address_t)0;
+
+    if (pagezero_end == ~(mach_vm_address_t)0)
+    {
+        mach_vm_address_t start = 0;
+        mach_vm_size_t size;
+        vm_region_basic_info_data_64_t info;
+        mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+        mach_port_t dummy_object_name = MACH_PORT_NULL;
+
+        pagezero_end = 0;
+        if (!mach_vm_region( mach_task_self(), &start, &size, VM_REGION_BASIC_INFO_64,
+                             (vm_region_info_t)&info, &count, &dummy_object_name ) &&
+            start <= 0x10000 && info.protection == VM_PROT_NONE && info.max_protection == VM_PROT_NONE)
+            pagezero_end = start + size;
+    }
+    return addr < pagezero_end;
+}
+#endif
+
 static void reserve_area( void *addr, void *end )
 {
 #ifdef __APPLE__
@@ -684,6 +711,18 @@ static void reserve_area( void *addr, void *end )
                 continue;
             }
         }
+#ifdef __aarch64__
+        else if (size && info.protection == VM_PROT_NONE && info.max_protection == VM_PROT_NONE &&
+                 is_soft_pagezero( address ))
+        {
+            mach_vm_address_t start = max( address, hole_address ), alloc_address = start;
+            mach_vm_size_t len = min( address + size, end_address ) - start;
+
+            if (!mach_vm_map( mach_task_self(), &alloc_address, len, 0, VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE,
+                              MEMORY_OBJECT_NULL, 0, 0, PROT_NONE, VM_PROT_ALL, VM_INHERIT_COPY ))
+                mmap_add_reserved_area( (void *)start, len );
+        }
+#endif
         address += size;
     }
 #else
@@ -1376,6 +1415,12 @@ static int get_unix_prot( BYTE vprot )
         if (vprot & VPROT_WRITECOPY) prot |= PROT_WRITE | PROT_READ;
         if (vprot & VPROT_EXEC) prot |= PROT_EXEC | PROT_READ;
         if (vprot & VPROT_WRITEWATCH) prot &= ~PROT_WRITE;
+#if defined(__APPLE__) && defined(__aarch64__)
+        /* Apple silicon refuses pages that are both writable and executable
+         * outside of MAP_JIT regions. x86 code never runs from them directly
+         * (the emulator translates it), so such pages stay writable. */
+        if (prot & PROT_WRITE) prot &= ~PROT_EXEC;
+#endif
     }
     if (!prot) prot = PROT_NONE;
     return prot;
@@ -1846,6 +1891,13 @@ static int mprotect_range( void *base, size_t size, BYTE set, BYTE clear )
     int prot, next;
     BYTE vprot;
 
+#if defined(__APPLE__) && defined(__aarch64__)
+    {
+        /* the kernel refuses any mprotect on MAP_JIT memory */
+        struct file_view *view = find_view( base, 0 );
+        if (view && (view->protect & VPROT_HOST_JIT)) return 0;
+    }
+#endif
     size = ROUND_SIZE( base, size, host_page_mask );
 
     vprot = get_host_page_vprot( addr );
@@ -2488,6 +2540,14 @@ static NTSTATUS decommit_pages( struct file_view *view, char *base, size_t size 
     }
     else host_end = ROUND_ADDR( base + size, host_page_mask );
 
+#if defined(__APPLE__) && defined(__aarch64__)
+    /* remapping would turn MAP_JIT pages into ordinary ones for good */
+    if (view->protect & VPROT_HOST_JIT)
+    {
+        if (host_start < host_end) madvise( host_start, host_end - host_start, MADV_FREE_REUSABLE );
+    }
+    else
+#endif
     if (host_start < host_end) anon_mmap_fixed( host_start, host_end - host_start, PROT_NONE, 0 );
     set_page_vprot_bits( base, size, 0, VPROT_COMMITTED );
     if (host_start < host_end) kernel_writewatch_register_range( view, host_start, host_end - host_start );
@@ -2778,6 +2838,10 @@ static void *get_host_addr_space_limit(void)
     unsigned int flags = MAP_PRIVATE | MAP_ANON;
     UINT_PTR addr = (UINT_PTR)1 << 63;
 
+#if defined(__APPLE__) && defined(__aarch64__)
+    /* the probe below finds 0x7fffffff0000, but the top 32 MB are not user space */
+    return (void *)(MACH_VM_MAX_ADDRESS & ~(UINT_PTR)granularity_mask);
+#endif
 #ifdef MAP_FIXED_NOREPLACE
     flags |= MAP_FIXED_NOREPLACE;
 #endif
@@ -5117,6 +5181,42 @@ void virtual_set_large_address_space(void)
 }
 
 
+#if defined(__APPLE__) && defined(__aarch64__)
+/***********************************************************************
+ *             map_host_jit_view
+ *
+ * Map writable ARM64EC code (an emulator's JIT buffer) with MAP_JIT, the only
+ * memory Apple silicon lets be both written and executed; each thread picks
+ * one or the other with pthread_jit_write_protect_np(). The kernel places
+ * MAP_JIT memory itself and refuses mprotect on it.
+ * virtual_mutex must be held by caller.
+ */
+static NTSTATUS map_host_jit_view( struct file_view **view_ret, size_t size, unsigned int vprot,
+                                   ULONG_PTR limit_low, ULONG_PTR limit_high )
+{
+    /* Without a hint the kernel puts it right above the loader, where Windows
+     * wants its images (0x140000000); the hint is honored when free. */
+    static char * const jit_hint = (char *)0x7e0000000000;
+    size_t extra = granularity_mask + 1;
+    char *ptr, *base;
+    NTSTATUS status;
+
+    ptr = mmap( jit_hint, size + extra, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANON | MAP_JIT, -1, 0 );
+    if (ptr == MAP_FAILED) return STATUS_NO_MEMORY;
+    base = ROUND_ADDR( ptr + granularity_mask, granularity_mask );
+    if (base > ptr) munmap( ptr, base - ptr );
+    if (ptr + extra > base) munmap( base + size, ptr + extra - base );
+    if (is_beyond_limit( base, size, address_space_limit ) || (ULONG_PTR)base < limit_low ||
+        (limit_high && is_beyond_limit( base, size, (void *)limit_high )))
+        status = STATUS_NO_MEMORY;
+    else
+        status = create_view( view_ret, base, size, vprot | VPROT_HOST_JIT );
+    if (status) munmap( base, size );
+    return status;
+}
+#endif
+
+
 /***********************************************************************
  *             allocate_virtual_memory
  *
@@ -5172,7 +5272,9 @@ static NTSTATUS allocate_virtual_memory( void **ret, SIZE_T *size_ptr, ULONG typ
     }
 
     if (type & MEM_RESERVE_PLACEHOLDER && (protect != PAGE_NOACCESS)) return STATUS_INVALID_PARAMETER;
+#if !defined(__APPLE__) || !defined(__aarch64__)
     if (!arm64ec_view && (attributes & MEM_EXTENDED_PARAMETER_EC_CODE)) return STATUS_INVALID_PARAMETER;
+#endif
 
     /* Reserve the memory */
 
@@ -5189,6 +5291,13 @@ static NTSTATUS allocate_virtual_memory( void **ret, SIZE_T *size_ptr, ULONG typ
 
             if (vprot & VPROT_WRITECOPY) status = STATUS_INVALID_PAGE_PROTECTION;
             else if (is_dos_memory) status = allocate_dos_memory( &view, vprot );
+#if defined(__APPLE__) && defined(__aarch64__)
+            /* An emulator's JIT buffer, marked as EC code. Outside ARM64EC (a WoW64
+             * emulator) the attribute only asks for host executable memory. */
+            else if ((attributes & MEM_EXTENDED_PARAMETER_EC_CODE) && !base &&
+                     (vprot & VPROT_EXEC) && (vprot & VPROT_WRITE))
+                status = map_host_jit_view( &view, size, vprot, limit_low, limit_high );
+#endif
             else status = map_view( &view, base, size, type, vprot, limit_low, limit_high,
                                     align ? align - 1 : granularity_mask );
 
@@ -5222,7 +5331,7 @@ static NTSTATUS allocate_virtual_memory( void **ret, SIZE_T *size_ptr, ULONG typ
         }
     }
 
-    if (!status && (attributes & MEM_EXTENDED_PARAMETER_EC_CODE))
+    if (!status && arm64ec_view && (attributes & MEM_EXTENDED_PARAMETER_EC_CODE))
     {
         commit_arm64ec_map( view );
         set_arm64ec_range( base, size );

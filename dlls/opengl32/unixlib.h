@@ -28952,6 +28952,7 @@ enum unix_funcs
     unix_wglSetPbufferAttribARB,
     unix_wglSetPixelFormatWINE,
     unix_wglSwapIntervalEXT,
+    unix_gl_batch,
     funcs_count
 };
 
@@ -28968,6 +28969,6 @@ struct gl_debug_message_callback_params
     char message[1];
 };
 
-#define UNIX_CALL( func, params ) WINE_UNIX_CALL( unix_ ## func, params )
+#include "legacy_gl.h"
 
 #endif /* __WINE_OPENGL32_UNIXLIB_H */

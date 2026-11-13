@@ -86,6 +86,7 @@
 #include "winioctl.h"
 #include "winternl.h"
 #include "unix_private.h"
+#include "msync.h"
 #include "wine/list.h"
 #include "wine/debug.h"
 
@@ -294,13 +295,17 @@ static WORD get_alt_machine( WORD machine )
 static void set_dll_path(void)
 {
     char *p, *path = getenv( "WINEDLLPATH" );
+    const char *gl_batch_path = getenv( "WINE_GL_BATCHING_PATH" );
     int i, count = 0;
 
     if (path) for (p = path, count = 1; *p; p++) if (*p == ':') count++;
 
-    dll_paths = malloc( (count + 2) * sizeof(*dll_paths) );
+    dll_paths = malloc( (count + 3) * sizeof(*dll_paths) );
     count = 0;
 
+    /* GooseHUB selects the optional OpenGL module for application launches.
+     * Maintenance tools and the compatibility fallback use the regular DLLs. */
+    if (gl_batch_path && *gl_batch_path) dll_paths[count++] = strdup( gl_batch_path );
     if (!build_dir) dll_paths[count++] = dll_dir;
 
     if (path)
@@ -469,6 +474,15 @@ static NTSTATUS loader_exec( char **argv, WORD machine )
 }
 
 
+/* An IL-only image built for any CPU runs as the host's 64-bit machine. On ARM64 that is x86-64,
+ * as on ARM64 Windows before .NET Framework 4.8.1: Wine Mono has no ARM64 runtime, and the
+ * x86-64 one runs under the x86-64 emulator. The server makes the same choice. */
+static USHORT get_il_only_machine(void)
+{
+    return native_machine == IMAGE_FILE_MACHINE_ARM64 ? IMAGE_FILE_MACHINE_AMD64 : native_machine;
+}
+
+
 /***********************************************************************
  *           exec_wineloader
  *
@@ -482,7 +496,7 @@ NTSTATUS exec_wineloader( char **argv, int socketfd, const struct pe_image_info 
     char preloader_reserve[64], socket_env[64];
 
     if (pe_info->wine_fakedll) res_start = res_end = 0;
-    if (pe_info->image_flags & IMAGE_FLAGS_ComPlusNativeReady) machine = native_machine;
+    if (pe_info->image_flags & IMAGE_FLAGS_ComPlusNativeReady) machine = get_il_only_machine();
 
     signal( SIGPIPE, SIG_DFL );
 
@@ -1438,7 +1452,7 @@ static NTSTATUS open_main_image( UNICODE_STRING *nt_name, void **module, SECTION
         status = virtual_map_module( mapping, module, &size, info, 0, 0, machine );
         if (status == STATUS_IMAGE_MACHINE_TYPE_MISMATCH && info->ComPlusNativeReady)
         {
-            info->Machine = native_machine;
+            info->Machine = get_il_only_machine();
             status = STATUS_SUCCESS;
         }
         NtClose( mapping );
@@ -1857,6 +1871,7 @@ static void start_main_thread(void)
 
     dbg_init();
     startup_info_size = server_init_process();
+    msync_init();
     virtual_map_user_shared_data();
     init_cpu_info();
     init_files();

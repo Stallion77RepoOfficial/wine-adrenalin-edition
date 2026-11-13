@@ -991,7 +991,16 @@ case $host_os in
     AC_SUBST(SECURITY_LIBS,"-framework Security -framework CoreFoundation")
     AC_SUBST(SYSTEMCONFIGURATION_LIBS,"-framework SystemConfiguration")
 
-    WINELOADER_LDFLAGS="-Wl,-segalign,0x1000,-pagezero_size,0x1000,-sectcreate,__TEXT,__info_plist,loader/wine_info.plist"
+    dnl An arm64 Mach-O binary must keep the default 4 GB __PAGEZERO: the
+    dnl kernel kills one with a smaller one at exec. With the
+    dnl cross-architecture-support entitlement it leaves that __PAGEZERO as
+    dnl an inaccessible mapping ntdll can replace, which gives the low memory.
+    dnl A loader built for macOS 11 keeps x18 (the TEB in ARM64 Windows code)
+    dnl across context switches; newer ones get it cleared.
+    case $HOST_ARCH in
+      aarch64) WINELOADER_LDFLAGS="-Wl,-x86_64_layout_emulation,-platform_version,macos,11.0,11.0,-sectcreate,__TEXT,__info_plist,loader/wine_info.plist" ;;
+      *) WINELOADER_LDFLAGS="-Wl,-segalign,0x1000,-pagezero_size,0x1000,-sectcreate,__TEXT,__info_plist,loader/wine_info.plist" ;;
+    esac
 
     case $HOST_ARCH in
       i386) wine_use_preloader=yes ;;
@@ -1281,16 +1290,17 @@ AS_CASE([$host_os], [darwin*], [
   AS_IF([test -f /opt/X11/lib/libXfixes.3.dylib],    [ac_cv_lib_soname_Xfixes=/opt/X11/lib/libXfixes.3.dylib])
   AS_IF([test -f /opt/X11/lib/libXxf86vm.1.dylib],   [ac_cv_lib_soname_Xxf86vm=/opt/X11/lib/libXxf86vm.1.dylib])
   AS_IF([test -f /opt/X11/lib/libXcomposite.1.dylib],[ac_cv_lib_soname_Xcomposite=/opt/X11/lib/libXcomposite.1.dylib])
-  dnl Homebrew x86_64 (/usr/local)
-  AS_IF([test -f /usr/local/lib/libdbus-1.3.dylib],      [ac_cv_lib_soname_dbus_1=/usr/local/lib/libdbus-1.3.dylib])
-  AS_IF([test -f /usr/local/lib/libgnutls.30.dylib],     [ac_cv_lib_soname_gnutls=/usr/local/lib/libgnutls.30.dylib])
-  AS_IF([test -f /usr/local/lib/libfreetype.6.dylib],    [ac_cv_lib_soname_freetype=/usr/local/lib/libfreetype.6.dylib])
-  AS_IF([test -f /usr/local/lib/libSDL2-2.0.0.dylib],   [ac_cv_lib_soname_SDL2=/usr/local/lib/libSDL2-2.0.0.dylib])
-  AS_IF([test -f /usr/local/lib/libvulkan.1.dylib],      [ac_cv_lib_soname_vulkan=/usr/local/lib/libvulkan.1.dylib])
-  AS_IF([test -f /usr/local/lib/libnetapi.1.0.0.dylib],  [ac_cv_lib_soname_netapi=/usr/local/lib/libnetapi.1.0.0.dylib])
+  dnl Homebrew: /usr/local holds the x86_64 libraries, /opt/homebrew the arm64 ones
+  AS_CASE([$HOST_ARCH], [aarch64], [_wine_brew=/opt/homebrew], [_wine_brew=/usr/local])
+  AS_IF([test -f $_wine_brew/lib/libdbus-1.3.dylib],      [ac_cv_lib_soname_dbus_1=$_wine_brew/lib/libdbus-1.3.dylib])
+  AS_IF([test -f $_wine_brew/lib/libgnutls.30.dylib],     [ac_cv_lib_soname_gnutls=$_wine_brew/lib/libgnutls.30.dylib])
+  AS_IF([test -f $_wine_brew/lib/libfreetype.6.dylib],    [ac_cv_lib_soname_freetype=$_wine_brew/lib/libfreetype.6.dylib])
+  AS_IF([test -f $_wine_brew/lib/libSDL2-2.0.0.dylib],   [ac_cv_lib_soname_SDL2=$_wine_brew/lib/libSDL2-2.0.0.dylib])
+  AS_IF([test -f $_wine_brew/lib/libvulkan.1.dylib],      [ac_cv_lib_soname_vulkan=$_wine_brew/lib/libvulkan.1.dylib])
+  AS_IF([test -f $_wine_brew/lib/libnetapi.1.0.0.dylib],  [ac_cv_lib_soname_netapi=$_wine_brew/lib/libnetapi.1.0.0.dylib])
   dnl CUPS lives in Cellar with version suffix
-  _wine_cups=$(ls /usr/local/Cellar/cups/*/lib/libcups.2.dylib 2>/dev/null | sort -V | tail -1)
-  AS_IF([test -z "$_wine_cups" -a -f /usr/local/lib/libcups.2.dylib],[_wine_cups=/usr/local/lib/libcups.2.dylib])
+  _wine_cups=$(ls $_wine_brew/Cellar/cups/*/lib/libcups.2.dylib 2>/dev/null | sort -V | tail -1)
+  AS_IF([test -z "$_wine_cups" -a -f $_wine_brew/lib/libcups.2.dylib],[_wine_cups=$_wine_brew/lib/libcups.2.dylib])
   AS_IF([test -n "$_wine_cups"],[ac_cv_lib_soname_cups=$_wine_cups])
 ])
 

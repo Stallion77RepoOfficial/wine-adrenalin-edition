@@ -33,6 +33,9 @@
 #include "wine/opengl_driver.h"
 #include "unix_thunks.h"
 
+extern NTSTATUS gl_batch_unavailable( void *args );
+extern NTSTATUS wow64_gl_batch( void *args );
+
 extern struct opengl_funcs null_opengl_funcs;
 
 static inline const struct opengl_funcs *get_dc_funcs( HDC hdc )

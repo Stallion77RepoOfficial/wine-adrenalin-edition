@@ -233,6 +233,18 @@ NTSTATUS WINAPI RtlWow64SetThreadContext( HANDLE handle, const WOW64_CONTEXT *co
     return NtSetInformationThread( handle, ThreadWow64Context, context, sizeof(*context) );
 }
 
+
+/******************************************************************************
+ *              RtlWow64SuspendThread  (NTDLL.@)
+ *
+ * Emulators use it to stop a guest thread before tearing it down; Wine's
+ * suspension already waits for the thread to leave the emulator.
+ */
+NTSTATUS WINAPI RtlWow64SuspendThread( HANDLE handle, ULONG *count )
+{
+    return NtSuspendThread( handle, count );
+}
+
 /******************************************************************************
  *              RtlWow64GetThreadSelectorEntry  (NTDLL.@)
  */

@@ -528,6 +528,7 @@ extern void macdrv_release_metal_device(macdrv_metal_device d);
 extern macdrv_metal_view macdrv_view_create_metal_view(macdrv_view v, macdrv_metal_device d);
 extern macdrv_metal_layer macdrv_view_get_metal_layer(macdrv_metal_view v);
 extern void macdrv_view_release_metal_view(macdrv_metal_view v);
+extern macdrv_view macdrv_window_get_content_view(macdrv_window w);
 extern macdrv_metal_swapchain macdrv_create_view_swapchain(macdrv_view v);
 extern macdrv_metal_swapchain macdrv_create_offscreen_swapchain(void* hwnd, CGRect bounds);
 extern macdrv_metal_layer macdrv_swapchain_get_layer(macdrv_metal_swapchain swapchain);

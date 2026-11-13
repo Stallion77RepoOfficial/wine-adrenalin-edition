@@ -4025,6 +4025,25 @@ void macdrv_view_release_metal_view(macdrv_metal_view v)
     });
 }
 
+/***********************************************************************
+ *              macdrv_window_get_content_view
+ *
+ * Return the window's content view. Client views are created lazily, when a
+ * client surface first presents, so a swap chain set up before the first
+ * frame has nothing else to attach a Metal view to.
+ */
+macdrv_view macdrv_window_get_content_view(macdrv_window w)
+{
+    WineWindow* window = (WineWindow*)w;
+    __block macdrv_view view;
+
+    OnMainThread(^{
+        view = (macdrv_view)[window contentView];
+    });
+
+    return view;
+}
+
 @protocol WineMetalSwapChain <NSObject>
 
 - (CAMetalLayer*) layer;

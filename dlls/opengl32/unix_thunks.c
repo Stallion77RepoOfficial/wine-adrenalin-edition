@@ -33657,6 +33657,7 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
     ext_wglSetPbufferAttribARB,
     ext_wglSetPixelFormatWINE,
     ext_wglSwapIntervalEXT,
+    gl_batch_unavailable,
 };
 
 C_ASSERT(ARRAYSIZE(__wine_unix_call_funcs) == funcs_count);
@@ -90050,6 +90051,7 @@ const unixlib_entry_t __wine_unix_call_wow64_funcs[] =
     wow64_ext_wglSetPbufferAttribARB,
     wow64_ext_wglSetPixelFormatWINE,
     wow64_ext_wglSwapIntervalEXT,
+    wow64_gl_batch,
 };
 
 C_ASSERT(ARRAYSIZE(__wine_unix_call_wow64_funcs) == funcs_count);

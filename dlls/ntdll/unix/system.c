@@ -558,6 +558,18 @@ static int has_feature( const char *line, const char *feat )
     return 0;
 }
 
+#if defined(__APPLE__) && defined(__aarch64__)
+static BOOL has_apple_arm_feature( const char *feat )
+{
+    char name[64];
+    int value = 0;
+    size_t size = sizeof(value);
+
+    snprintf( name, sizeof(name), "hw.optional.arm.%s", feat );
+    return !sysctlbyname( name, &value, &size, NULL, 0 ) && value;
+}
+#endif
+
 static void init_cpu_model(void)
 {
     unsigned int implementer = 0x41, part = 0, variant = 0, revision = 0;
@@ -700,6 +712,16 @@ void init_shared_data_cpuinfo( KUSER_SHARED_DATA *data )
         }
         fclose( f );
     }
+#elif defined(__APPLE__) && defined(__aarch64__)
+    features[PF_ARM_VFP_32_REGISTERS_AVAILABLE]        = TRUE;
+    features[PF_ARM_NEON_INSTRUCTIONS_AVAILABLE]       = TRUE;
+    features[PF_ARM_V8_CRC32_INSTRUCTIONS_AVAILABLE]   = has_apple_arm_feature( "FEAT_CRC32" );
+    features[PF_ARM_V8_CRYPTO_INSTRUCTIONS_AVAILABLE]  = has_apple_arm_feature( "FEAT_AES" );
+    features[PF_ARM_V81_ATOMIC_INSTRUCTIONS_AVAILABLE] = has_apple_arm_feature( "FEAT_LSE" );
+    features[PF_ARM_V82_DP_INSTRUCTIONS_AVAILABLE]     = has_apple_arm_feature( "FEAT_DotProd" );
+    features[PF_ARM_V83_JSCVT_INSTRUCTIONS_AVAILABLE]  = has_apple_arm_feature( "FEAT_JSCVT" );
+    features[PF_ARM_V83_LRCPC_INSTRUCTIONS_AVAILABLE]  = has_apple_arm_feature( "FEAT_LRCPC" );
+    features[PF_ARM_LSE2_AVAILABLE]                    = has_apple_arm_feature( "FEAT_LSE2" );
 #endif
 
     features[PF_FASTFAIL_AVAILABLE]      = TRUE;
@@ -2005,6 +2027,51 @@ static DWORD get_core_id_regs_arm64( struct smbios_wine_id_reg_value_arm64 *regs
 
 #undef READ_ID_REG
 #undef STR
+    return regidx;
+}
+
+#elif defined(__APPLE__)
+
+/* macOS traps user space reads of the ID registers, so rebuild the fields that
+ * Windows code (and x86 emulators) check from the hw.optional.arm.* list. */
+static DWORD get_core_id_regs_arm64( struct smbios_wine_id_reg_value_arm64 *regs,
+                                     WORD logical_thread_id )
+{
+#define F(feat) has_apple_arm_feature( #feat )
+#define FIELD(cond, value, shift) ((cond) ? (ULONG64)(value) << (shift) : 0)
+    ULONG64 isar0, isar1, isar2, pfr0, pfr1, mmfr1, mmfr2;
+    DWORD regidx = 0;
+
+    isar0 = FIELD( F(FEAT_AES), F(FEAT_PMULL) ? 2 : 1, 4 ) | FIELD( F(FEAT_SHA1), 1, 8 ) |
+            FIELD( F(FEAT_SHA256), F(FEAT_SHA512) ? 2 : 1, 12 ) | FIELD( F(FEAT_CRC32), 1, 16 ) |
+            FIELD( F(FEAT_LSE), 2, 20 ) | FIELD( F(FEAT_RDM), 1, 28 ) | FIELD( F(FEAT_SHA3), 1, 32 ) |
+            FIELD( F(FEAT_DotProd), 1, 44 ) | FIELD( F(FEAT_FHM), 1, 48 ) |
+            FIELD( F(FEAT_FlagM), F(FEAT_FlagM2) ? 2 : 1, 52 );
+    isar1 = FIELD( F(FEAT_DPB), F(FEAT_DPB2) ? 2 : 1, 0 ) | FIELD( F(FEAT_JSCVT), 1, 12 ) |
+            FIELD( F(FEAT_FCMA), 1, 16 ) | FIELD( F(FEAT_LRCPC), F(FEAT_LRCPC2) ? 2 : 1, 20 ) |
+            FIELD( F(FEAT_FRINTTS), 1, 32 ) | FIELD( F(FEAT_SB), 1, 36 ) | FIELD( F(FEAT_BF16), 1, 44 ) |
+            FIELD( F(FEAT_I8MM), 1, 52 );
+    isar2 = FIELD( F(FEAT_WFxT), 2, 0 ) | FIELD( F(FEAT_RPRES), 1, 4 );
+    /* EL0 and EL1 AArch64 only; FP and AdvSIMD report half precision support */
+    pfr0 = 1 << 0 | 1 << 4 | FIELD( F(FEAT_FP16), 1, 16 ) | FIELD( F(FEAT_FP16), 1, 20 ) |
+           FIELD( F(FEAT_DIT), 1, 48 ) | FIELD( F(FEAT_CSV2), 1, 56 ) | FIELD( F(FEAT_CSV3), 1, 60 );
+    pfr1 = FIELD( F(FEAT_BTI), 1, 0 ) | FIELD( F(FEAT_SME), F(FEAT_SME2) ? 2 : 1, 24 );
+    mmfr1 = FIELD( F(FEAT_AFP), 1, 44 );
+    mmfr2 = FIELD( F(FEAT_LSE2), 1, 32 );
+#undef FIELD
+#undef F
+
+    /* Apple implementer, AArch64 */
+    regs[regidx++] = (struct smbios_wine_id_reg_value_arm64){ 0x4000, 0x610f0000 };  /* MIDR_EL1 */
+    regs[regidx++] = (struct smbios_wine_id_reg_value_arm64){ 0x4020, pfr0 };        /* ID_AA64PFR0_EL1 */
+    regs[regidx++] = (struct smbios_wine_id_reg_value_arm64){ 0x4021, pfr1 };        /* ID_AA64PFR1_EL1 */
+    regs[regidx++] = (struct smbios_wine_id_reg_value_arm64){ 0x4030, isar0 };       /* ID_AA64ISAR0_EL1 */
+    regs[regidx++] = (struct smbios_wine_id_reg_value_arm64){ 0x4031, isar1 };       /* ID_AA64ISAR1_EL1 */
+    regs[regidx++] = (struct smbios_wine_id_reg_value_arm64){ 0x4032, isar2 };       /* ID_AA64ISAR2_EL1 */
+    regs[regidx++] = (struct smbios_wine_id_reg_value_arm64){ 0x4039, mmfr1 };       /* ID_AA64MMFR1_EL1 */
+    regs[regidx++] = (struct smbios_wine_id_reg_value_arm64){ 0x403a, mmfr2 };       /* ID_AA64MMFR2_EL1 */
+    /* CTR_EL0 traps too: 64-byte lines, PIPT, and no IDC/DIC so caches always get maintained */
+    regs[regidx++] = (struct smbios_wine_id_reg_value_arm64){ 0x5801, 0x8444c004 };
     return regidx;
 }
 

@@ -791,6 +791,30 @@ sub allocate_object_names($)
     return 0;
 }
 
+my %gl_batch_functions = (
+    glBegin => [ "begin", "mode, 0, 0, 0" ],
+    glEnd => [ "end", "0, 0, 0, 0" ],
+    glVertex2f => [ "vertex2", "gl_batch_float( x ), gl_batch_float( y ), 0, 0" ],
+    glVertex2fv => [ "vertex2", "gl_batch_word( v, 0 ), gl_batch_word( v, 1 ), 0, 0" ],
+    glVertex3f => [ "vertex3", "gl_batch_float( x ), gl_batch_float( y ), gl_batch_float( z ), 0" ],
+    glVertex3fv => [ "vertex3", "gl_batch_word( v, 0 ), gl_batch_word( v, 1 ), gl_batch_word( v, 2 ), 0" ],
+    glVertex4f => [ "vertex4", "gl_batch_float( x ), gl_batch_float( y ), gl_batch_float( z ), gl_batch_float( w )" ],
+    glVertex4fv => [ "vertex4", "gl_batch_word( v, 0 ), gl_batch_word( v, 1 ), gl_batch_word( v, 2 ), gl_batch_word( v, 3 )" ],
+    glTexCoord2f => [ "tex2", "gl_batch_float( s ), gl_batch_float( t ), 0, 0" ],
+    glTexCoord2fv => [ "tex2", "gl_batch_word( v, 0 ), gl_batch_word( v, 1 ), 0, 0" ],
+    glNormal3f => [ "normal3", "gl_batch_float( nx ), gl_batch_float( ny ), gl_batch_float( nz ), 0" ],
+    glNormal3fv => [ "normal3", "gl_batch_word( v, 0 ), gl_batch_word( v, 1 ), gl_batch_word( v, 2 ), 0" ],
+    glColor3f => [ "color3", "gl_batch_float( red ), gl_batch_float( green ), gl_batch_float( blue ), 0" ],
+    glColor3fv => [ "color3", "gl_batch_word( v, 0 ), gl_batch_word( v, 1 ), gl_batch_word( v, 2 ), 0" ],
+    glColor4f => [ "color4", "gl_batch_float( red ), gl_batch_float( green ), gl_batch_float( blue ), gl_batch_float( alpha )" ],
+    glColor4fv => [ "color4", "gl_batch_word( v, 0 ), gl_batch_word( v, 1 ), gl_batch_word( v, 2 ), gl_batch_word( v, 3 )" ],
+    glColor4ub => [ "color4ub", "(UINT)red | ((UINT)green << 8) | ((UINT)blue << 16) | ((UINT)alpha << 24), 0, 0, 0" ],
+    glColor4ubv => [ "color4ub", "gl_batch_word( v, 0 ), 0, 0, 0" ],
+    glMultiTexCoord2f => [ "multi2", "target, gl_batch_float( s ), gl_batch_float( t ), 0" ],
+    glMultiTexCoord2fARB => [ "multi2arb", "target, gl_batch_float( s ), gl_batch_float( t ), 0" ],
+    glMultiTexCoord2fSGIS => [ "multi2sgis", "target, gl_batch_float( s ), gl_batch_float( t ), 0" ],
+);
+
 sub generate_win_thunk($$)
 {
     my ($name, $func) = @_;
@@ -881,8 +905,21 @@ sub generate_win_thunk($$)
         $post_call .= "    args.ret = put_context_object_range( $map_type, range, args.ret );\n" if $name =~ /^glGen/;
         $post_call .= "    put_context_objects( $map_type, 1, &args.ret );\n" if $name =~ /^glCreate/;
     }
+    if (my $batch = $gl_batch_functions{$name})
+    {
+        $ret .= "#if defined(__i386__) && defined(WINE_OPENGL_BATCHING)\n";
+        $ret .= "    struct $name\_params args;\n    NTSTATUS status;\n    struct gl_batch_buffer *buffer;\n\n";
+        $ret .= "    if ((buffer = gl_batch_current()))\n    {\n";
+        $ret .= "        gl_batch_append( buffer, gl_batch_$batch->[0], $batch->[1] );\n        return;\n    }\n";
+        $ret .= "    args = (struct $name\_params){$params };\n#else\n";
+    }
     $ret .= "    struct $name\_params args = {$params };\n";
     $ret .= "    NTSTATUS status;\n";
+    $ret .= "#endif\n" if defined $gl_batch_functions{$name};
+    if ($name =~ /^glDebugMessageCallback(?:ARB|AMD)?$/)
+    {
+        $ret .= "\n#if defined(__i386__) && defined(WINE_OPENGL_BATCHING)\n    gl_batch_disable();\n#endif\n";
+    }
     $ret .= "    int integer;\n" if $get_integer;
     $ret .= "    " . get_func_trace( $name, $func, 1 );
     $ret .= $checks;
@@ -1824,6 +1861,7 @@ foreach (sort keys %ext_functions)
     next if defined $manual_win_functions{$_};
     printf OUT "    unix_%s,\n", $_;
 }
+print OUT "    unix_gl_batch,\n";
 print OUT "    funcs_count\n";
 print OUT "};\n\n";
 
@@ -1840,7 +1878,7 @@ print OUT "    UINT32 length;\n";
 print OUT "    char message[1];\n";
 print OUT "};\n\n";
 
-print OUT "#define UNIX_CALL( func, params ) WINE_UNIX_CALL( unix_ ## func, params )\n\n";
+print OUT "#include \"legacy_gl.h\"\n\n";
 
 print OUT "#endif /* __WINE_OPENGL32_UNIXLIB_H */\n";
 close OUT;
@@ -2073,6 +2111,7 @@ foreach (sort keys %ext_functions)
     next if defined $manual_win_functions{$_};
     printf OUT "    ext_%s,\n", $_;
 }
+print OUT "    gl_batch_unavailable,\n";
 print OUT "};\n\n";
 print OUT "C_ASSERT(ARRAYSIZE(__wine_unix_call_funcs) == funcs_count);\n\n";
 
@@ -2120,6 +2159,7 @@ foreach (sort keys %ext_functions)
     next if defined $manual_win_functions{$_};
     printf OUT "    wow64_ext_%s,\n", $_;
 }
+print OUT "    wow64_gl_batch,\n";
 print OUT "};\n\n";
 print OUT "C_ASSERT(ARRAYSIZE(__wine_unix_call_wow64_funcs) == funcs_count);\n\n";
 

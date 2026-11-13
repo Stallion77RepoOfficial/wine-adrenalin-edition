@@ -69,7 +69,7 @@ struct tasklist_process_info
     DWORD pid_value;
     DWORD memory_usage_value;
     DWORD session_id_value;
-    WCHAR image_name[32];
+    WCHAR image_name[MAX_PATH];
     WCHAR pid[32];
     WCHAR session_name[32];
     WCHAR session_number[32];

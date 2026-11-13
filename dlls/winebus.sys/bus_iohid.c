@@ -112,6 +112,9 @@ struct iohid_device
     struct unix_device unix_device;
     IOHIDDeviceRef device;
     uint8_t *buffer;
+    BOOL configuration_interface;
+    BOOL has_vendor_input;
+    BYTE vendor_input_reports[256];
 };
 
 static inline struct iohid_device *impl_from_unix_device(struct unix_device *iface)
@@ -149,7 +152,37 @@ static void handle_IOHIDDeviceIOHIDReportCallback(void *context,
         uint32_t reportID, uint8_t *report, CFIndex report_length)
 {
     struct unix_device *iface = (struct unix_device *)context;
+    struct iohid_device *impl = impl_from_unix_device(iface);
+    if (impl->configuration_interface &&
+        (reportID >= ARRAY_SIZE(impl->vendor_input_reports) || !impl->vendor_input_reports[reportID])) return;
     bus_event_queue_input_report(&event_queue, iface, report, report_length);
+}
+
+static void collect_vendor_input_reports(struct iohid_device *impl)
+{
+    CFArrayRef elements = IOHIDDeviceCopyMatchingElements(impl->device, NULL, 0);
+    BYTE blocked_reports[256] = {0};
+    CFIndex i;
+    unsigned int id;
+
+    if (!elements) return;
+    for (i = 0; i < CFArrayGetCount(elements); ++i)
+    {
+        IOHIDElementRef element = (IOHIDElementRef)CFArrayGetValueAtIndex(elements, i);
+        IOHIDElementType type = IOHIDElementGetType(element);
+        uint32_t page = IOHIDElementGetUsagePage(element);
+        id = IOHIDElementGetReportID(element);
+        if (type < kIOHIDElementTypeInput_Misc || type > kIOHIDElementTypeInput_ScanCodes ||
+            id >= ARRAY_SIZE(impl->vendor_input_reports)) continue;
+        if (page >= 0xff00 && page <= 0xffff) impl->vendor_input_reports[id] = TRUE;
+        else blocked_reports[id] = TRUE;
+    }
+    CFRelease(elements);
+    for (id = 0; id < ARRAY_SIZE(impl->vendor_input_reports); ++id)
+    {
+        impl->vendor_input_reports[id] &= !blocked_reports[id];
+        impl->has_vendor_input |= impl->vendor_input_reports[id];
+    }
 }
 
 static void iohid_device_destroy(struct unix_device *iface)
@@ -161,6 +194,10 @@ static NTSTATUS iohid_device_start(struct unix_device *iface)
     DWORD length;
     struct iohid_device *impl = impl_from_unix_device(iface);
     CFNumberRef num;
+
+    /* Forward only wholly vendor-defined input reports for configuration
+     * interfaces. Mixed/protected reports stay with the Mac input driver. */
+    if (impl->configuration_interface && !impl->has_vendor_input) return STATUS_SUCCESS;
 
     num = IOHIDDeviceGetProperty(impl->device, CFSTR(kIOHIDMaxInputReportSizeKey));
     length = CFNumberToDWORD(num);
@@ -276,6 +313,8 @@ static void handle_DeviceMatchingCallback(void *context, IOReturn result, void *
     struct iohid_device *impl;
     USAGE_AND_PAGE usages;
     CFStringRef str;
+    CFTypeRef built_in;
+    BOOL game_controller, feature_interface;
 
     usages.UsagePage = CFNumberToDWORD(IOHIDDeviceGetProperty(IOHIDDevice, CFSTR(kIOHIDPrimaryUsagePageKey)));
     usages.Usage = CFNumberToDWORD(IOHIDDeviceGetProperty(IOHIDDevice, CFSTR(kIOHIDPrimaryUsageKey)));
@@ -294,14 +333,24 @@ static void handle_DeviceMatchingCallback(void *context, IOReturn result, void *
             desc.bus_type = BUS_TYPE_USB;
     }
 
-    if (usages.UsagePage != HID_USAGE_PAGE_GENERIC ||
-        !(usages.Usage == HID_USAGE_GENERIC_JOYSTICK || usages.Usage == HID_USAGE_GENERIC_GAMEPAD))
+    game_controller = usages.UsagePage == HID_USAGE_PAGE_GENERIC &&
+                      (usages.Usage == HID_USAGE_GENERIC_JOYSTICK || usages.Usage == HID_USAGE_GENERIC_GAMEPAD);
+    built_in = IOHIDDeviceGetProperty(IOHIDDevice, CFSTR(kIOHIDBuiltInKey));
+    feature_interface = (desc.bus_type == BUS_TYPE_USB || desc.bus_type == BUS_TYPE_BLUETOOTH) &&
+                        !(built_in && CFGetTypeID(built_in) == CFBooleanGetTypeID() && CFBooleanGetValue(built_in)) &&
+                        CFNumberToDWORD(IOHIDDeviceGetProperty(IOHIDDevice, CFSTR(kIOHIDMaxFeatureReportSizeKey))) &&
+                        usages.UsagePage != HID_USAGE_PAGE_DIGITIZER &&
+                        (usages.UsagePage != HID_USAGE_PAGE_GENERIC ||
+                         (usages.Usage != HID_USAGE_GENERIC_MOUSE && usages.Usage != HID_USAGE_GENERIC_KEYBOARD &&
+                          usages.Usage != HID_USAGE_GENERIC_POINTER));
+    if (!game_controller && !feature_interface)
     {
-        /* winebus isn't currently meant to handle anything but these, and
-         * opening keyboards, mice, or the Touch Bar on older MacBooks triggers
-         * a permissions dialog for input monitoring.
+        /* Leave ordinary pointer, keyboard and touch input with the Mac
+         * driver. Peripheral utilities can still use a separate feature
+         * interface without registering another keyboard/input callback.
          */
-        WARN("Ignoring HID device %p (vid %04x, pid %04x): not a joystick or gamepad\n", IOHIDDevice, desc.vid, desc.pid);
+        TRACE("Ignoring HID device %p (vid %04x, pid %04x): no supported controller or configuration interface\n",
+              IOHIDDevice, desc.vid, desc.pid);
         return;
     }
 
@@ -332,6 +381,10 @@ static void handle_DeviceMatchingCallback(void *context, IOReturn result, void *
     list_add_tail(&device_list, &impl->unix_device.entry);
     impl->device = IOHIDDevice;
     impl->buffer = NULL;
+    impl->configuration_interface = !game_controller;
+    impl->has_vendor_input = FALSE;
+    memset(impl->vendor_input_reports, 0, sizeof(impl->vendor_input_reports));
+    if (impl->configuration_interface) collect_vendor_input_reports(impl);
 
     bus_event_queue_device_created(&event_queue, &impl->unix_device, &desc);
 }
